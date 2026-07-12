@@ -1,67 +1,63 @@
 /**
  * ============================================================================
- * HOOL GEM - CORE ENGINE V1.0 (PROUDLY STABLE & DATA-DRIVEN)
+ * 🤖 رسالة إلى المساعد الذكي المستقبلي (AI DEVELOPER INSTRUCTIONS) 🤖
  * ============================================================================
- * كود محرك الألعاب الأساسي المعتمد والمستقر 100% لتشغيل الاستديو ثلاثي الأبعاد
- * 
- * المخطط المعماري الهيكلي للمحرك (Architectural Blueprint):
- * ---------------------------------------------------------
- * 1. حقن الواجهة (UI & CSS Injection): بناء عناصر واجهة المستخدم والأزرار والأنماط محلياً، بما في ذلك "مؤشر التحديث الأخضر".
- * 2. نواة الـ 3D (Three.js Core): تهيئة المشهد، الكاميرا، الريندرر، والإضاءة الموجهة والمحيطية.
- * 3. نظام الإحداثيات المطلق (300 Squares Grid): بناء أرضية رياضية ثابتة بمصفوفة 20×15 مربع.
- * 4. متحكم اللمس المعكوس (Inverse Raycasting Fix): معالجة اللمس بدقة عند التفاف الشاشة الإجباري (Portrait/Landscape).
- * 5. معالج الشخصية والأنيميشن (Mixer & Blending): استدعاء نماذج GLTF ومزج الحركات بسلاسة (Lerp).
- * 6. حساب المسارات المنحنية (Rounded Path Math): توليد منحنيات بيزيه التربيعية لمنع الالتفاف الحاد في الحركة.
- * 7. حلقة التحديث المستمر (Render Loop): معالجة المدخلات، تحديث الحركات، وتتبع الكاميرا المهدأ.
+ * مرحباً بك. هذا هو الكود الأساسي (Core Engine) لمحرك Hool Gem 3D. 
+ * يُرجى قراءة هذه القواعد المعمارية جيداً قبل تعديل أي سطر:
+ * * 1. [تكامل الـ HTML]: هذا الملف لا يعمل منفرداً، بل يتم استدعاؤه كـ Module من صفحة "Gateway" (HTML).
+ * بمجرد أن يعمل هذا السكريبت، فإنه يقوم بمسح محتوى `document.body.innerHTML` بالكامل ليبني 
+ * واجهته الخاصة (#game-wrapper). لا تقم بتعديل هذه الآلية لأنها تنظف ذاكرة الـ DOM من صفحة الدخول.
+ * * 2. [إجبار الالتفاف Landscape]: المتصفحات على الهواتف لا تسمح بقلب الشاشة إجبارياً، لذا نستخدم CSS 
+ * `transform: rotate(90deg)` على حاوية اللعبة عندما يكون الهاتف في وضع (Portrait).
+ * * 3. [معالجة اللمس المعكوس]: بسبب الالتفاف الوهمي بالـ CSS، إحداثيات التاتش (Touch X, Y) تختلف عن 
+ * إحداثيات الشاشة الحقيقية. راجع دالة `window.addEventListener('touchmove')` و `pointerdown`، 
+ * لقد قمنا بعكس المحاور رياضياً. **إياك أن تعبث بهذه المعادلات وإلا سيتوقف التاتش!**
+ * * 4. [أنماط الكاميرا والتحكم]: اللعبة تعتمد على 4 أنماط للمتغير `mode`:
+ * - 'NORMAL': السحب على الشاشة يحرك الشخصية (Swipe-to-Move).
+ * - 'CAMERA': السحب يدور الكاميرا حول نقطة التركيز (Orbit Controls).
+ * - 'FREECAM': السحب والقرص (Pinch) يتيح الطيران الحر.
+ * - 'PATHING': يتم تجميد الكاميرا والشخصية لتشغيل حركة المسار.
+ * * 5. [الأرضية 300 مربع]: تعتمد على Texture يتم رسمه بـ Canvas 2D ثم كسائه لسطح 3D. 
+ * الترقيم يبدأ من أعلى اليسار لأسفل اليمين ليتوافق مع Raycaster.
+ * ============================================================================
  */
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// تعطيل رسائل التحذير والخطأ الثانوية في وحدة التحكم (Console) لضمان بقاء بيئة التطوير نظيفة تماماً
+// منع إزعاج الكونسول
 console.warn = () => {}; console.error = () => {}; 
 
 // ============================================================================
-// [1] حقن واجهة المستخدم والأنماط الرسومية ديناميكياً (UI & CSS INJECTION)
+// [1] بناء واجهة المستخدم الرسومية للمحرك (UI INJECTION)
 // ============================================================================
 document.body.innerHTML = `
     <style>
-        /* تصفير الهوامش ومنع التمرير الافتراضي للمتصفح وحظر تحديد النصوص بأصابع المستخدم */
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; user-select: none; -webkit-user-select: none; font-family: sans-serif; }
+        /* إجبار إغلاق اللمس الافتراضي للمتصفح لمنع تضارب أحداث السحب (Swipe Conflict) */
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; user-select: none; touch-action: none; font-family: sans-serif; }
         
-        /* حاوية اللعبة الأساسية: تدعم أبعاد الشاشة بالكامل */
         #game-wrapper { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; overflow: hidden; }
         
-        /* 📱 هندسة الالتفاف الإجباري (Landscape Force): إذا كان الهاتف في وضع طولي،
-           يتم تدوير حاوية اللعبة رياضياً بزاوية 90 درجة وتوسيع أبعادها لتطابق الشاشة العرضية إجبارياً */
+        /* الدوران الإجباري للهواتف الطولية */
         @media screen and (orientation: portrait) {
             #game-wrapper { width: 100vh; height: 100vw; transform: rotate(90deg); transform-origin: center; top: 50%; left: 50%; margin-top: -50vw; margin-left: -50vh; }
         }
 
-        /* 🟢 مؤشر التحديث (Version Indicator): دائرة خضراء للتأكد من وصول التحديث الجديد من السيرفر */
-        #update-badge { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 24px; height: 24px; background-color: #2ed573; color: #000; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 14px; font-weight: bold; z-index: 9999; box-shadow: 0 0 12px #2ed573; border: 2px solid #000; }
-
-        /* حاوية الكانفاس (Canvas) الخاصة بـ Three.js وتثبيتها في الخلفية خلف الأزرار */
         #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; touch-action: none; }
         
-        /* الطبقة العلوية للأزرار الجانبية (HUD Layer) */
         #ui-layer { position: absolute; top: 15px; left: 15px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
         
-        /* التصميم النيوني الأصلي المعتمد للأزرار الجانبية */
         .hud-btn { background: rgba(0,0,0,0.85); color: #00f2fe; border: 1px solid #00f2fe; border-radius: 5px; padding: 8px 12px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 11px; text-align: center; }
         .hud-btn.active-mode { background: #00f2fe; color: #000; box-shadow: 0 0 10px #00f2fe; }
 
-        /* لوحة إعدادات مخرجات كود المسار اليمنى المنسدلة */
         #path-panel { position: absolute; top: 15px; right: -250px; width: 180px; background: rgba(10, 10, 10, 0.95); border: 1px solid #00f2fe; border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; transition: right 0.3s ease; box-shadow: -5px 5px 15px rgba(0,0,0,0.8); max-height: 90vh; }
-        #path-panel.open { right: 15px; } 
+        #path-panel.open { right: 15px; }
         
         .panel-title { color: #00f2fe; font-size: 13px; text-align: center; margin: 0 0 5px 0; font-weight: bold; }
         
-        /* شاشة عرض أكواد الـ JSON */
         #code-editor { width: 100%; height: 90px; background: #050505; color: #00f2fe; border: 1px solid #333; padding: 6px; font-family: monospace; font-size: 11px; direction: ltr; resize: none; border-radius: 4px; outline: none; white-space: pre; box-sizing: border-box; }
         #code-editor:focus { border-color: #00f2fe; }
 
-        /* منطقة اختيار الحركات المنسدلة عمودياً داخل لوحة المطور */
         .actions-scroller { max-height: 85px; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding-right: 4px; }
         .actions-scroller::-webkit-scrollbar { width: 4px; }
         .actions-scroller::-webkit-scrollbar-thumb { background: #00f2fe; border-radius: 4px; }
@@ -74,10 +70,6 @@ document.body.innerHTML = `
     </style>
 
     <div id="game-wrapper">
-        <!-- مؤشر التحديث (تغيير الرقم هنا يثبت سحب الكود الجديد) -->
-        <div id="update-badge">1</div>
-
-        <!-- طبقة أزرار التحكم والمحاكاة الجانبية -->
         <div id="ui-layer">
             <button id="btn-play-path" class="hud-btn" style="border-color: #2ed573; color: #2ed573;">▶ تشغيل المسار</button>
             <button id="btn-path" class="hud-btn">صفحة المطور</button>
@@ -90,7 +82,6 @@ document.body.innerHTML = `
             <button id="btn-music" class="hud-btn">موسيقى: إيقاف</button>
         </div>
 
-        <!-- لوحة التحكم في المسارات (تظهر وتختفي عند الضغط على صفحة المطور) -->
         <div id="path-panel">
             <h3 class="panel-title">إعدادات المسار (JSON)</h3>
             <textarea id="code-editor" placeholder="[JSON Code...]"></textarea>
@@ -115,18 +106,17 @@ document.body.innerHTML = `
             </div>
         </div>
 
-        <!-- الكبسولة التي يتم بداخلها بناء الـ 3D Viewport -->
         <div id="canvas-container"></div>
     </div>
 `;
 
 // ============================================================================
-// [2] تهيئة وتكوين نواة الـ 3D (THREE.JS CORE INITIALIZATION)
+// [2] تهيئة THREE.JS والمشهد الأساسي
 // ============================================================================
 const wrapper = document.getElementById('game-wrapper');
 const container = document.getElementById('canvas-container');
 
-// جلب المكونات البرمجية للواجهة لربطها بالأحداث لاحقاً
+// تعريف الأزرار
 const btnPlayPath = document.getElementById('btn-play-path');
 const btnPath = document.getElementById('btn-path');
 const btnGrid = document.getElementById('btn-grid');
@@ -141,30 +131,27 @@ const codeEditor = document.getElementById('code-editor');
 const btnClearPath = document.getElementById('btn-clear-path');
 const btnCopyPath = document.getElementById('btn-copy-path');
 
-// إنشاء المشهد والكاميرا المنظورية
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, wrapper.clientWidth / wrapper.clientHeight, 0.001, 300);
 
-// إعداد محرك الريندر مع تفعيل تنعيم الحواف
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, logarithmicDepthBuffer: true });
 renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 container.appendChild(renderer.domElement);
 
-// الإضاءة (إضاءة محيطية + إضاءة موجهة كالشمس)
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
 mainLight.position.set(2, 5, 4);
 scene.add(mainLight);
 
-// متغيرات التحكم في أنماط الكاميرا وتخميدها الليرب (Lerp System)
+// متغيرات نظام الكاميرا والتخميد الرياضي (Lerp)
 let mode = 'NORMAL'; 
-let camAngle = 0, camPitch = 0.2, camRadius = 6.5; 
-let focusX = 0, focusY = 1.2, focusZ = 0;         
-let tCamAngle = 0, tCamPitch = 0.2, tCamRadius = 6.5; 
-let tFocusX = 0, tFocusY = 1.2, tFocusZ = 0;         
+let camAngle = 0, camPitch = 0.2, camRadius = 6.5;
+let focusX = 0, focusY = 1.2, focusZ = 0;
+let tCamAngle = 0, tCamPitch = 0.2, tCamRadius = 6.5;
+let tFocusX = 0, tFocusY = 1.2, tFocusZ = 0;
 
-// نظام الصوت الخلفي والموسيقى
+// نظام الموسيقى
 const bgMusic = new Audio('https://raw.githubusercontent.com/korpika/hoolgem/main/bg_music.mp3');
 bgMusic.loop = true; bgMusic.volume = 0.4;
 let isMusicPlaying = false;
@@ -178,43 +165,32 @@ window.addEventListener('touchstart', autoStartMusic, { once: true });
 window.addEventListener('click', autoStartMusic, { once: true });
 
 btnMusic.addEventListener('click', () => {
-    if(isMusicPlaying) {
-        bgMusic.pause(); isMusicPlaying = false; btnMusic.innerText = "موسيقى: إيقاف"; btnMusic.classList.remove('active-mode');
-    } else {
-        bgMusic.play().then(() => { isMusicPlaying = true; btnMusic.innerText = "موسيقى: تشغيل"; btnMusic.classList.add('active-mode'); });
-    }
+    if(isMusicPlaying) { bgMusic.pause(); isMusicPlaying = false; btnMusic.innerText = "موسيقى: إيقاف"; btnMusic.classList.remove('active-mode'); } 
+    else { bgMusic.play().then(() => { isMusicPlaying = true; btnMusic.innerText = "موسيقى: تشغيل"; btnMusic.classList.add('active-mode'); }); }
 });
 
 // ============================================================================
-// [3] نظام الإحداثيات الرياضي المطلق (300 SQUARES LOGICAL GRID)
+// [3] إنشاء شبكة الأرضية (300 مربع)
 // ============================================================================
-// الأرضية مساحتها 10م عرض × 7.5م عمق = 20×15 (300 مربع)
 const COLS = 20; const ROWS = 15; const WIDTH = 10.0; const DEPTH = 7.5;  
 
-/**
- * دالة رسم المربعات والأرقام على نسيج الأرضية.
- */
 function createGridTex(cols, rows) {
     const canvas = document.createElement('canvas');
     canvas.width = cols * 100; canvas.height = rows * 100; 
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, 0, canvas.width, canvas.height); 
-    ctx.strokeStyle = '#00f2fe'; ctx.lineWidth = 4; 
+    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#00f2fe'; ctx.lineWidth = 4;
     
     let c = 1, w = 100, h = 100;
     ctx.font = 'bold 35px Arial'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    
-    // الترقيم يبدأ من أعلى اليسار وينزل لأسفل ليتوافق مع مصفوفة الـ UV الأصلية
     for(let y=0; y<rows; y++) {
         for(let x=0; x<cols; x++) {
-            ctx.strokeRect(x*w, y*h, w, h);
-            ctx.fillText(c++, x*w + w/2, y*h + h/2); 
+            ctx.strokeRect(x*w, y*h, w, h); ctx.fillText(c++, x*w + w/2, y*h + h/2);
         }
     }
     return new THREE.CanvasTexture(canvas);
 }
 
-// بناء الأرضية
 const floorGeo = new THREE.PlaneGeometry(WIDTH, DEPTH);
 const floorMat = new THREE.MeshBasicMaterial({ map: createGridTex(COLS, ROWS) });
 const floorMesh = new THREE.Mesh(floorGeo, floorMat); 
@@ -222,9 +198,7 @@ floorMesh.rotation.x = -Math.PI/2;
 scene.add(floorMesh);
 scene.updateMatrixWorld(true);
 
-let isGridVisible = true;
-let isPathModeActive = false; 
-
+let isGridVisible = true; let isPathModeActive = false;
 let pathCurve = null; let pathVisualLine = null; let movementState = 'IDLE'; 
 let pathProgress = 0; let pathTotalLength = 0; let currentTargetNodeIndex = 1; let actionWaitTimer = 0;
 let actualPathPoints3D = []; let parsedPathData = [];
@@ -235,7 +209,6 @@ btnGrid.addEventListener('click', (e) => {
     isGridVisible ? e.target.classList.add('active-mode') : e.target.classList.remove('active-mode');
 });
 
-// محرر المسار (يعدل موقع الكاميرا لرؤية علوية)
 btnPath.addEventListener('click', () => {
     isPathModeActive = !isPathModeActive;
     if(isPathModeActive) {
@@ -247,77 +220,44 @@ btnPath.addEventListener('click', () => {
     }
 });
 
-function getCodeArray() {
-    let val = codeEditor.value.trim(); if(!val) return [];
-    try { return JSON.parse(val); } catch(e) { return null; }
-}
-function setCodeArray(arr) {
-    if(arr.length === 0) { codeEditor.value = ''; return; }
-    codeEditor.value = "[\n" + arr.map(p => "  " + JSON.stringify(p)).join(",\n") + "\n]";
-    codeEditor.scrollTop = codeEditor.scrollHeight;
-}
+function getCodeArray() { let val = codeEditor.value.trim(); if(!val) return []; try { return JSON.parse(val); } catch(e) { return null; } }
+function setCodeArray(arr) { if(arr.length === 0) { codeEditor.value = ''; return; } codeEditor.value = "[\n" + arr.map(p => "  " + JSON.stringify(p)).join(",\n") + "\n]"; codeEditor.scrollTop = codeEditor.scrollHeight; }
 
-btnClearPath.addEventListener('click', () => { 
-    codeEditor.value = ''; if(pathVisualLine) { scene.remove(pathVisualLine); pathVisualLine = null; }
-});
-
-btnCopyPath.addEventListener('click', (e) => {
-    if(!codeEditor.value.trim()) return;
-    navigator.clipboard.writeText(codeEditor.value).then(() => {
-        let old = e.target.innerText; e.target.innerText = "تم النسخ";
-        setTimeout(() => e.target.innerText = old, 1500);
-    });
-});
-
+btnClearPath.addEventListener('click', () => { codeEditor.value = ''; if(pathVisualLine) { scene.remove(pathVisualLine); pathVisualLine = null; } });
+btnCopyPath.addEventListener('click', (e) => { if(!codeEditor.value.trim()) return; navigator.clipboard.writeText(codeEditor.value); });
 document.querySelectorAll('.action-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
         let act = e.currentTarget.getAttribute('data-act'); let arr = getCodeArray(); if(!arr || arr.length === 0) return;
-        let lastPoint = arr[arr.length - 1];
-        if(lastPoint.length === 2) lastPoint.push(act); else lastPoint[2] = act; 
-        setCodeArray(arr);
+        let lastPoint = arr[arr.length - 1]; if(lastPoint.length === 2) lastPoint.push(act); else lastPoint[2] = act; setCodeArray(arr);
     });
 });
 
 // ============================================================================
-// [4] استدعاء ومعالجة النماذج والحركات (ASSET PIPELINE)
+// [4] استيراد الشخصيات والحركات والمزج بينها
 // ============================================================================
 let charactersData = []; let globalWalkClip = null; let idleActions = {}; 
 let currentIdleIndex = 0; let currentCharNum = 5; let targetObjRotation = 0; 
 let isSleeping = false, isTransitioningSleep = false, idleSwitchTimer = 0.0, isCharLoading = false;
 
-const clock = new THREE.Clock();
-const loader = new GLTFLoader();
+const clock = new THREE.Clock(); const loader = new GLTFLoader();
 
-// جلب الشخصية وحركة المشي الافتراضية
 loader.load('https://raw.githubusercontent.com/korpika/hoolgem/main/char_5.glb', (charGltf) => {
     loader.load('https://raw.githubusercontent.com/korpika/hoolgem/main/Standard%20Walk.glb', (walkGltf) => {
         if(walkGltf.animations[0]) globalWalkClip = walkGltf.animations[0];
-        setupCharacter(charGltf.scene);
-        loadRestOfIdlesInBackground(); 
+        setupCharacter(charGltf.scene); loadRestOfIdlesInBackground();
     });
 });
 
-/**
- * دالة تكوين وربط عظام الشخصية.
- */
 function setupCharacter(charScene) {
-    if(charactersData[0] && charactersData[0].scene) {
-        charScene.position.copy(charactersData[0].scene.position);
-        charScene.rotation.copy(charactersData[0].scene.rotation);
-        scene.remove(charactersData[0].scene); 
-    } else { charScene.position.set(0, 0, 0); }
+    if(charactersData[0] && charactersData[0].scene) { charScene.position.copy(charactersData[0].scene.position); charScene.rotation.copy(charactersData[0].scene.rotation); scene.remove(charactersData[0].scene); } 
+    else { charScene.position.set(0, 0, 0); }
+    charScene.traverse((child) => { if (child.isMesh || child.isSkinnedMesh) child.frustumCulled = false; }); scene.add(charScene);
     
-    charScene.traverse((child) => { if (child.isMesh || child.isSkinnedMesh) child.frustumCulled = false; });
-    scene.add(charScene);
-    
-    let mixer = new THREE.AnimationMixer(charScene);
-    let wAction = globalWalkClip ? mixer.clipAction(globalWalkClip) : null;
-    if(wAction) wAction.setLoop(THREE.LoopRepeat); 
-    
+    let mixer = new THREE.AnimationMixer(charScene); let wAction = globalWalkClip ? mixer.clipAction(globalWalkClip) : null; if(wAction) wAction.setLoop(THREE.LoopRepeat);
     let currentActionToPlay = wAction;
     Object.keys(idleActions).forEach(key => {
         let clip = idleActions[key].getClip(); idleActions[key] = mixer.clipAction(clip);
-        if(key === 'idle_9' || key === 'idle_10') { idleActions[key].setLoop(THREE.LoopOnce); idleActions[key].clampWhenFinished = true; } 
+        if(key === 'idle_9' || key === 'idle_10') { idleActions[key].setLoop(THREE.LoopOnce); idleActions[key].clampWhenFinished = true; }
         if(key === 'idle_1') currentActionToPlay = idleActions[key];
     });
 
@@ -327,27 +267,20 @@ function setupCharacter(charScene) {
 
 async function loadRestOfIdlesInBackground() {
     for(let i = 1; i <= 10; i++) {
-        try {
-            let gltf = await loader.loadAsync(`https://raw.githubusercontent.com/korpika/hoolgem/main/idle_${i}.glb`);
-            if(gltf.animations[0]) {
-                let clip = gltf.animations[0];
-                if(i === 9) clip.duration = Math.max(0, clip.duration - 0.35); 
-                if(charactersData[0]) {
-                    let newAction = charactersData[0].mixer.clipAction(clip);
+        try { let gltf = await loader.loadAsync(`https://raw.githubusercontent.com/korpika/hoolgem/main/idle_${i}.glb`);
+            if(gltf.animations[0]) { let clip = gltf.animations[0]; if(i === 9) clip.duration = Math.max(0, clip.duration - 0.35); 
+                if(charactersData[0]) { let newAction = charactersData[0].mixer.clipAction(clip);
                     if(i === 9 || i === 10) { newAction.setLoop(THREE.LoopOnce); newAction.clampWhenFinished = true; }
-                    idleActions[`idle_${i}`] = newAction;
-                    if(i === 1 && movementState === 'IDLE') playAction(newAction); 
+                    idleActions[`idle_${i}`] = newAction; if(i === 1 && movementState === 'IDLE') playAction(newAction); 
                 }
             }
         } catch(e) { }
     }
 }
 
-// خوارزمية مزج الحركات لتنعيم الانتقال بين الأنيميشن (Cross-Fade)
 function playAction(nextAction) {
     let char = charactersData[0]; if (!char || !nextAction || char.currentAction === nextAction) return;
-    if (char.currentAction) char.currentAction.fadeOut(0.2);
-    nextAction.reset().fadeIn(0.2).play(); char.currentAction = nextAction;
+    if (char.currentAction) char.currentAction.fadeOut(0.2); nextAction.reset().fadeIn(0.2).play(); char.currentAction = nextAction;
 }
 
 function triggerNextSequentialIdle() {
@@ -358,42 +291,22 @@ function triggerNextSequentialIdle() {
 btnChar.addEventListener('click', async (e) => {
     if(mode !== 'NORMAL' || isCharLoading || isSleeping || isTransitioningSleep || movementState === 'PATHING') return;
     isCharLoading = true; const originalText = e.target.innerText; e.target.innerText = "⏳...";
-
     let attempt = currentCharNum + 1, success = false;
-    while(!success && attempt <= 20) {
-        try { let gltf = await loader.loadAsync(`https://raw.githubusercontent.com/korpika/hoolgem/main/char_${attempt}.glb`);
-            setupCharacter(gltf.scene); currentCharNum = attempt; success = true;
-        } catch(err) { attempt++; }
-    }
-    if(!success) { attempt = 1;
-        while(!success && attempt <= currentCharNum) {
-            try { let gltf = await loader.loadAsync(`https://raw.githubusercontent.com/korpika/hoolgem/main/char_${attempt}.glb`);
-                setupCharacter(gltf.scene); currentCharNum = attempt; success = true;
-            } catch(err) { attempt++; }
-        }
-    }
+    while(!success && attempt <= 20) { try { let gltf = await loader.loadAsync(`https://raw.githubusercontent.com/korpika/hoolgem/main/char_${attempt}.glb`); setupCharacter(gltf.scene); currentCharNum = attempt; success = true; } catch(err) { attempt++; } }
+    if(!success) { attempt = 1; while(!success && attempt <= currentCharNum) { try { let gltf = await loader.loadAsync(`https://raw.githubusercontent.com/korpika/hoolgem/main/char_${attempt}.glb`); setupCharacter(gltf.scene); currentCharNum = attempt; success = true; } catch(err) { attempt++; } } }
     e.target.innerText = originalText; isCharLoading = false;
 });
 
-btnAnim.addEventListener('click', () => {
-    if(movementState !== 'IDLE' || isSleeping || isTransitioningSleep || movementState === 'PATHING') return;
-    idleSwitchTimer = 0.0; triggerNextSequentialIdle();
-});
+btnAnim.addEventListener('click', () => { if(movementState !== 'IDLE' || isSleeping || isTransitioningSleep || movementState === 'PATHING') return; idleSwitchTimer = 0.0; triggerNextSequentialIdle(); });
 
 btnSleep.addEventListener('click', (e) => {
     if(!charactersData[0] || isTransitioningSleep || movementState === 'PATHING') return;
-    if(!isSleeping) {
-        if(idleActions['idle_9']) { isSleeping = true; playAction(idleActions['idle_9']); e.target.classList.add('active-mode'); }
-    } else {
+    if(!isSleeping) { if(idleActions['idle_9']) { isSleeping = true; playAction(idleActions['idle_9']); e.target.classList.add('active-mode'); } } 
+    else {
         if(idleActions['idle_10']) {
             isSleeping = false; isTransitioningSleep = true; e.target.classList.remove('active-mode');
             let wakeAction = idleActions['idle_10']; wakeAction.timeScale = 1.0; playAction(wakeAction);
-            const onWakeFinished = (ev) => {
-                if(ev.action === wakeAction) {
-                    charactersData[0].mixer.removeEventListener('finished', onWakeFinished); isTransitioningSleep = false;
-                    if(!isSleeping && idleActions['idle_1']) { currentIdleIndex = 0; playAction(idleActions['idle_1']); }
-                }
-            };
+            const onWakeFinished = (ev) => { if(ev.action === wakeAction) { charactersData[0].mixer.removeEventListener('finished', onWakeFinished); isTransitioningSleep = false; if(!isSleeping && idleActions['idle_1']) { currentIdleIndex = 0; playAction(idleActions['idle_1']); } } };
             charactersData[0].mixer.addEventListener('finished', onWakeFinished);
         }
     }
@@ -412,133 +325,80 @@ btnFreeCam.addEventListener('click', (e) => {
 });
 
 // ============================================================================
-// [5] متحكم اللمس الـ Raycaster المعكوس والمظبوط (INVERSE SCREEN RAYCASTING)
+// [5] نظام اللمس المعكوس لمعالجة إحداثيات Landscape (INVERSE RAYCASTING)
 // ============================================================================
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
+const raycaster = new THREE.Raycaster(); const mouse = new THREE.Vector2();
 
-/**
- * هندسة التاتش المعكوس: لحل مشكلة قفل الإحداثيات عندما يجبر الأندرويد تدوير الشاشة عرضياً (Landscape).
- */
 container.addEventListener('pointerdown', (e) => {
     if(!isPathModeActive) return;
+    let touchX = e.clientX; let touchY = e.clientY; let isPortrait = window.innerHeight > window.innerWidth;
     
-    let touchX = e.clientX; let touchY = e.clientY;
-    let isPortrait = window.innerHeight > window.innerWidth;
-    
+    // المعادلة الأصلية لحل مشكلة الإحداثيات عند اللمس
     if(isPortrait) {
-        let logicalX = touchY;
-        let logicalY = window.innerWidth - touchX;
-        mouse.x = (logicalX / window.innerHeight) * 2 - 1;
-        mouse.y = -(logicalY / window.innerWidth) * 2 + 1;
+        let logicalX = touchY; let logicalY = window.innerWidth - touchX;
+        mouse.x = (logicalX / window.innerHeight) * 2 - 1; mouse.y = -(logicalY / window.innerWidth) * 2 + 1;
     } else {
-        mouse.x = (touchX / window.innerWidth) * 2 - 1;
-        mouse.y = -(touchY / window.innerHeight) * 2 + 1;
+        mouse.x = (touchX / window.innerWidth) * 2 - 1; mouse.y = -(touchY / window.innerHeight) * 2 + 1;
     }
     
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObject(floorMesh);
+    raycaster.setFromCamera(mouse, camera); const intersects = raycaster.intersectObject(floorMesh);
     
     if(intersects.length > 0) {
-        let uv = intersects[0].uv;
-        let c = Math.floor(uv.x * COLS);
-        let r = Math.floor((1.0 - uv.y) * ROWS); // احترام اتجاه مصفوفة الـ UV الأصلية المرقّمة
-        c = Math.max(0, Math.min(COLS - 1, c)); r = Math.max(0, Math.min(ROWS - 1, r));
-        let squareNum = (r * COLS) + c + 1; 
+        let uv = intersects[0].uv; let c = Math.floor(uv.x * COLS); let r = Math.floor((1.0 - uv.y) * ROWS); 
+        c = Math.max(0, Math.min(COLS - 1, c)); r = Math.max(0, Math.min(ROWS - 1, r)); let squareNum = (r * COLS) + c + 1;
         
         let arr = getCodeArray(); if(arr === null) { alert("يوجد خطأ في كود JSON!"); return; }
-        
-        if(arr.length === 0 || arr[arr.length-1][1] !== squareNum) {
-            arr.push(["floor", squareNum]); setCodeArray(arr);
-        }
+        if(arr.length === 0 || arr[arr.length-1][1] !== squareNum) { arr.push(["floor", squareNum]); setCodeArray(arr); }
     }
 });
 
 function getExact3DPosition(num) {
-    let index = num - 1;
-    let c = index % COLS; let r = Math.floor(index / COLS);
-    let localX = (c * 0.5) + 0.25 - (WIDTH / 2);
-    let localY = (r * 0.5) + 0.25 - (DEPTH / 2);
-    return new THREE.Vector3(localX, 0, localY); 
+    let index = num - 1; let c = index % COLS; let r = Math.floor(index / COLS);
+    let localX = (c * 0.5) + 0.25 - (WIDTH / 2); let localY = (r * 0.5) + 0.25 - (DEPTH / 2);
+    return new THREE.Vector3(localX, 0, localY);
 }
 
-// ============================================================================
-// [6] خوارزمية حساب المسارات ونقاط الانحناء الناعم (ROUNDED PATH GEOMETRY)
-// ============================================================================
-/**
- * دالة زرع منحنى بيزيه تربيعي (QuadraticBezierCurve3) عند المنعطفات لمنع الالتفاف الحاد (90 درجة).
- */
 function createRoundedPath(points, cornerRadius = 0.2) {
-    let path = new THREE.CurvePath();
-    if(points.length < 2) return path;
-    if(points.length === 2) { path.add(new THREE.LineCurve3(points[0], points[1])); return path; }
-
+    let path = new THREE.CurvePath(); if(points.length < 2) return path; if(points.length === 2) { path.add(new THREE.LineCurve3(points[0], points[1])); return path; }
     let currentPos = points[0].clone();
     for (let i = 1; i < points.length - 1; i++) {
-        let pPrev = points[i - 1], pCurr = points[i], pNext = points[i + 1];
-        let v1 = new THREE.Vector3().subVectors(pCurr, pPrev).normalize();
-        let v2 = new THREE.Vector3().subVectors(pNext, pCurr).normalize();
-        
+        let pPrev = points[i - 1], pCurr = points[i], pNext = points[i + 1]; let v1 = new THREE.Vector3().subVectors(pCurr, pPrev).normalize(); let v2 = new THREE.Vector3().subVectors(pNext, pCurr).normalize();
         let r = Math.min(cornerRadius, pCurr.distanceTo(pPrev)*0.4, pNext.distanceTo(pCurr)*0.4);
-
-        let cornerStart = new THREE.Vector3().copy(pCurr).sub(v1.clone().multiplyScalar(r));
-        let cornerEnd = new THREE.Vector3().copy(pCurr).add(v2.clone().multiplyScalar(r));
-
+        let cornerStart = new THREE.Vector3().copy(pCurr).sub(v1.clone().multiplyScalar(r)); let cornerEnd = new THREE.Vector3().copy(pCurr).add(v2.clone().multiplyScalar(r));
         if (currentPos.distanceTo(cornerStart) > 0.01) path.add(new THREE.LineCurve3(currentPos.clone(), cornerStart.clone()));
-        path.add(new THREE.QuadraticBezierCurve3(cornerStart.clone(), pCurr.clone(), cornerEnd.clone()));
-        currentPos = cornerEnd.clone();
+        path.add(new THREE.QuadraticBezierCurve3(cornerStart.clone(), pCurr.clone(), cornerEnd.clone())); currentPos = cornerEnd.clone();
     }
-    if (currentPos.distanceTo(points[points.length - 1]) > 0.01) path.add(new THREE.LineCurve3(currentPos.clone(), points[points.length - 1].clone()));
-    return path;
+    if (currentPos.distanceTo(points[points.length - 1]) > 0.01) path.add(new THREE.LineCurve3(currentPos.clone(), points[points.length - 1].clone())); return path;
 }
 
 btnPlayPath.addEventListener('click', () => {
     if(!charactersData[0] || isSleeping || isTransitioningSleep) return;
-    
     let arr = getCodeArray(); if(arr === null || arr.length === 0) { alert("لا يوجد مسار محفوظ!"); return; }
-
-    parsedPathData = arr; let tempPoints = [];
-    parsedPathData.forEach(item => { tempPoints.push(getExact3DPosition(item[1])); });
-
-    actualPathPoints3D = [tempPoints[0]];
-    for(let i=1; i<tempPoints.length; i++) {
-        if(tempPoints[i].distanceTo(tempPoints[i-1]) > 0.05) actualPathPoints3D.push(tempPoints[i]);
-    }
-
-    if(pathVisualLine) scene.remove(pathVisualLine);
-    pathProgress = 0; currentTargetNodeIndex = 1; actionWaitTimer = 0;
-    
-    if (actualPathPoints3D.length > 0) charactersData[0].scene.position.copy(actualPathPoints3D[0]);
-    if (actualPathPoints3D.length < 2) return;
-
-    pathCurve = createRoundedPath(actualPathPoints3D, 0.2);
-    pathTotalLength = pathCurve.getLength();
-    movementState = 'PATHING'; 
-    
-    const lineGeo = new THREE.BufferGeometry().setFromPoints(pathCurve.getPoints(200));
-    const lineMat = new THREE.LineBasicMaterial({ color: 0x2ed573, linewidth: 3 });
-    pathVisualLine = new THREE.Line(lineGeo, lineMat);
-    pathVisualLine.position.y += 0.02; 
-    scene.add(pathVisualLine);
-    if(!isGridVisible) pathVisualLine.visible = false;
-    
+    parsedPathData = arr; let tempPoints = []; parsedPathData.forEach(item => { tempPoints.push(getExact3DPosition(item[1])); });
+    actualPathPoints3D = [tempPoints[0]]; for(let i=1; i<tempPoints.length; i++) { if(tempPoints[i].distanceTo(tempPoints[i-1]) > 0.05) actualPathPoints3D.push(tempPoints[i]); }
+    if(pathVisualLine) scene.remove(pathVisualLine); pathProgress = 0; currentTargetNodeIndex = 1; actionWaitTimer = 0;
+    if (actualPathPoints3D.length > 0) charactersData[0].scene.position.copy(actualPathPoints3D[0]); if (actualPathPoints3D.length < 2) return;
+    pathCurve = createRoundedPath(actualPathPoints3D, 0.2); pathTotalLength = pathCurve.getLength(); movementState = 'PATHING'; 
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(pathCurve.getPoints(200)); const lineMat = new THREE.LineBasicMaterial({ color: 0x2ed573, linewidth: 3 });
+    pathVisualLine = new THREE.Line(lineGeo, lineMat); pathVisualLine.position.y += 0.02; scene.add(pathVisualLine); if(!isGridVisible) pathVisualLine.visible = false;
     if(charactersData[0].walkAction) playAction(charactersData[0].walkAction);
 });
 
 // ============================================================================
-// [7] معالجة إيماءات اللمس الحر للكاميرا (TOUCH & PINCH CAMERA GESTURES)
+// [6] معالجة إيماءات الكاميرا والمشي عبر اللمس (CAMERA & SWIPE SYSTEM)
 // ============================================================================
+let startX = 0, startY = 0; let initialPinchDist = null;
+
+// يتم وضع مستمعات اللمس على الـ window بدلاً من الـ container لضمان التقاط السحب في كل مكان على الشاشة
 window.addEventListener('touchstart', (e) => {
     if(isPathModeActive) return;
-    if (e.touches.length === 2 && mode === 'CAMERA') {
-        initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-        startX = (e.touches[0].clientX + e.touches[1].clientX)/2; startY = (e.touches[0].clientY + e.touches[1].clientY)/2; return;
-    }
+    if (e.touches.length === 2 && mode === 'CAMERA') { initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); startX = (e.touches[0].clientX + e.touches[1].clientX)/2; startY = (e.touches[0].clientY + e.touches[1].clientY)/2; return; }
     startX = e.touches[0].clientX; startY = e.touches[0].clientY;
-});
+}, {passive: false});
 
 window.addEventListener('touchmove', (e) => {
-    if(isPathModeActive) return; e.preventDefault(); 
+    if(isPathModeActive) return; 
+    
     let touchX = e.touches[0].clientX; let touchY = e.touches[0].clientY;
     let isPortrait = window.innerHeight > window.innerWidth;
     let moveX = isPortrait ? (touchY - startY) : (touchX - startX);
@@ -547,7 +407,7 @@ window.addEventListener('touchmove', (e) => {
     if(mode === 'CAMERA') {
         if(e.touches.length === 1) {
             tCamAngle -= moveX * 0.005; tCamPitch += moveY * 0.005; 
-            if(tCamPitch < 0.05) tCamPitch = 0.05; if(tCamPitch > Math.PI/2 - 0.05) tCamPitch = Math.PI/2 - 0.05; 
+            if(tCamPitch < 0.05) tCamPitch = 0.05; if(tCamPitch > Math.PI/2 - 0.05) tCamPitch = Math.PI/2 - 0.05;
             startX = touchX; startY = touchY;
         } else if (e.touches.length === 2) {
             let dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
@@ -562,7 +422,6 @@ window.addEventListener('touchmove', (e) => {
     }
 }, {passive: false});
 
-// نظام توجيه ومشي الشخصية بالسحب (Swipe-to-Move)
 window.addEventListener('touchend', (e) => {
     initialPinchDist = null;
     if(isPathModeActive || charactersData.length === 0 || isSleeping || isTransitioningSleep) return;
@@ -592,19 +451,16 @@ window.addEventListener('touchend', (e) => {
     if(charactersData[0] && charactersData[0].walkAction) playAction(charactersData[0].walkAction);
 });
 
-// تحديث أبعاد الكاميرا عند دوران الهاتف
 window.addEventListener('resize', () => {
     camera.aspect = wrapper.clientWidth / wrapper.clientHeight; camera.updateProjectionMatrix();
     renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
 });
 
 // ============================================================================
-// [8] حلقة الأنيميشن والرسم اللانهائية والـ LERP (CORE RENDER & ANIMATION LOOP)
+// [7] حلقة الرسم والمحاكاة اللانهائية (RENDER LOOP)
 // ============================================================================
 function animate() {
-    requestAnimationFrame(animate);
-    let delta = clock.getDelta(); 
-    let char = charactersData[0];
+    requestAnimationFrame(animate); let delta = clock.getDelta(); let char = charactersData[0];
     
     if (char) {
         if (char.mixer) char.mixer.update(delta); 
@@ -625,7 +481,6 @@ function animate() {
             if (movementState === 'UP') char.scene.position.z -= moveSpeed;
             if (movementState === 'DOWN') char.scene.position.z += moveSpeed;
             
-            // قفل الحدود الفيزيائية للمشهد
             char.scene.position.x = Math.max(-5.0, Math.min(5.0, char.scene.position.x));
             char.scene.position.z = Math.max(-3.75, Math.min(3.75, char.scene.position.z));
             
@@ -640,7 +495,7 @@ function animate() {
             actionWaitTimer -= delta;
             if (actionWaitTimer <= 0) {
                 movementState = 'PATHING'; currentTargetNodeIndex++;
-                if(char.walkAction) playAction(char.walkAction); 
+                if(char.walkAction) playAction(char.walkAction);
             }
         }
         else if (movementState === 'PATHING' && pathCurve) {
@@ -670,27 +525,14 @@ function animate() {
                         movementState = 'PLAYING_ACTION'; let reqAction = parsedPathData[dataIndex][2];
                         if(reqAction === 'idle_9' || reqAction === 'idle_10') actionWaitTimer = 4.0; else actionWaitTimer = 2.5; 
                         if(idleActions[reqAction]) playAction(idleActions[reqAction]); else if(idleActions['idle_1']) playAction(idleActions['idle_1']);
-                    } else {
-                        currentTargetNodeIndex++;
-                    }
+                    } else { currentTargetNodeIndex++; }
                 }
             }
         }
     }
 
-    // 🎥 نظام الـ Lerp لتنعيم حركات الكاميرا (Smooth Camera Interpolation)
-    camAngle = THREE.MathUtils.lerp(camAngle, tCamAngle, 5.0 * delta);
-    camPitch = THREE.MathUtils.lerp(camPitch, tCamPitch, 5.0 * delta);
-    camRadius = THREE.MathUtils.lerp(camRadius, tCamRadius, 5.0 * delta);
-    focusX = THREE.MathUtils.lerp(focusX, tFocusX, 8.0 * delta);
-    focusY = THREE.MathUtils.lerp(focusY, tFocusY, 8.0 * delta);
-    focusZ = THREE.MathUtils.lerp(focusZ, tFocusZ, 8.0 * delta);
-
-    let xz_radius = Math.cos(camPitch) * camRadius;
-    camera.position.x = focusX + Math.sin(camAngle) * xz_radius;
-    camera.position.y = focusY + Math.sin(camPitch) * camRadius;
-    camera.position.z = focusZ + Math.cos(camAngle) * xz_radius;
-    camera.lookAt(focusX, focusY, focusZ); 
+    camAngle = THREE.MathUtils.lerp(camAngle, tCamAngle, 5.0 * delta); camPitch = THREE.MathUtils.lerp(camPitch, tCamPitch, 5.0 * delta); camRadius = THREE.MathUtils.lerp(camRadius, tCamRadius, 5.0 * delta); focusX = THREE.MathUtils.lerp(focusX, tFocusX, 8.0 * delta); focusY = THREE.MathUtils.lerp(focusY, tFocusY, 8.0 * delta); focusZ = THREE.MathUtils.lerp(focusZ, tFocusZ, 8.0 * delta);
+    let xz_radius = Math.cos(camPitch) * camRadius; camera.position.x = focusX + Math.sin(camAngle) * xz_radius; camera.position.y = focusY + Math.sin(camPitch) * camRadius; camera.position.z = focusZ + Math.cos(camAngle) * xz_radius; camera.lookAt(focusX, focusY, focusZ); 
 
     renderer.render(scene, camera); 
 }
